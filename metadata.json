@@ -1,0 +1,5 @@
+{
+  "name": "BenchmarkHub: Academic Dataset Explorer",
+  "description": "Discover, manage, and track benchmark datasets from arXiv, Hugging Face, Google Scholar, and Semantic Scholar using Gemini AI Search.",
+  "requestFramePermissions": []
+}
