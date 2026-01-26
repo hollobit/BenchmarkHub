@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BenchmarkDataset, SearchState, ViewMode } from './types';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { BenchmarkDataset, SearchState, ViewMode, SortConfig, SortField, SortOrder } from './types';
 import { searchBenchmarkDatasets } from './services/geminiService';
 import DatasetCard from './components/DatasetCard';
+import ComparisonModal from './components/ComparisonModal';
 
 const SEARCH_STATUSES = [
   "Initializing search parameters...",
@@ -17,6 +18,7 @@ const SEARCH_STATUSES = [
 
 const App: React.FC = () => {
   const [query, setQuery] = useState('');
+  const [filterQuery, setFilterQuery] = useState('');
   const [searchState, setSearchState] = useState<SearchState>({
     isSearching: false,
     results: [],
@@ -26,7 +28,12 @@ const App: React.FC = () => {
   const [savedDatasets, setSavedDatasets] = useState<BenchmarkDataset[]>([]);
   const [activeTab, setActiveTab] = useState<'discover' | 'saved'>('discover');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'year', order: 'desc' });
   
+  // Selection state for comparison
+  const [selectedForComparison, setSelectedForComparison] = useState<string[]>([]);
+  const [isComparing, setIsComparing] = useState(false);
+
   const progressInterval = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,7 +58,6 @@ const App: React.FC = () => {
     if (e) e.preventDefault();
     if (!query.trim()) return;
 
-    // Reset search state
     setSearchState({ 
       isSearching: true, 
       results: [], 
@@ -60,47 +66,28 @@ const App: React.FC = () => {
       status: SEARCH_STATUSES[0] 
     });
     setActiveTab('discover');
+    setFilterQuery(''); // Clear local filter on new global search
 
-    // Start progress simulation
     progressInterval.current = window.setInterval(() => {
       setSearchState(prev => {
         if (!prev.isSearching) return prev;
-        
         const increment = prev.progress < 40 ? 5 : prev.progress < 70 ? 2 : prev.progress < 90 ? 0.5 : 0;
         const nextProgress = Math.min(prev.progress + increment, 95);
-        
         const nextStatusIndex = Math.min(
           Math.floor((nextProgress / 100) * SEARCH_STATUSES.length),
           SEARCH_STATUSES.length - 1
         );
-
-        return {
-          ...prev,
-          progress: nextProgress,
-          status: SEARCH_STATUSES[nextStatusIndex]
-        };
+        return { ...prev, progress: nextProgress, status: SEARCH_STATUSES[nextStatusIndex] };
       });
     }, 800);
 
     try {
       const results = await searchBenchmarkDatasets(query);
       if (progressInterval.current) clearInterval(progressInterval.current);
-      
-      setSearchState({
-        isSearching: false,
-        results,
-        progress: 100,
-        status: 'Search complete'
-      });
+      setSearchState({ isSearching: false, results, progress: 100, status: 'Search complete' });
     } catch (error: any) {
       if (progressInterval.current) clearInterval(progressInterval.current);
-      setSearchState({
-        isSearching: false,
-        results: [],
-        error: error.message || 'An unexpected error occurred',
-        progress: 0,
-        status: ''
-      });
+      setSearchState({ isSearching: false, results: [], error: error.message || 'An unexpected error occurred', progress: 0, status: '' });
     }
   };
 
@@ -122,11 +109,11 @@ const App: React.FC = () => {
 
   const handleRemove = useCallback((id: string) => {
     setSavedDatasets(prev => prev.filter(d => d.id !== id));
+    setSelectedForComparison(prev => prev.filter(sid => sid !== id));
   }, []);
 
   const handleExportCSV = () => {
     if (savedDatasets.length === 0) return;
-
     const headers = ['Title', 'Source', 'Authors', 'Year', 'Paper Link', 'GitHub Link', 'Item Count', 'Specs', 'Description'];
     const rows = savedDatasets.map(d => [
       `"${(d.title || '').replace(/"/g, '""')}"`,
@@ -139,7 +126,6 @@ const App: React.FC = () => {
       `"${(d.specs || '').replace(/"/g, '""')}"`,
       `"${(d.description || '').replace(/"/g, '""')}"`
     ]);
-
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -151,50 +137,21 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  const parseCSVLine = (line: string) => {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        result.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current);
-    return result;
-  };
-
   const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
       if (!text) return;
-
       const lines = text.split(/\r?\n/);
       if (lines.length < 2) return;
-
       const newDatasets: BenchmarkDataset[] = [];
-      // Skip header
       for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
         const columns = parseCSVLine(lines[i]);
         if (columns.length < 9) continue;
-
-        const dataset: BenchmarkDataset = {
+        newDatasets.push({
           id: `${Date.now()}-${i}`,
           title: columns[0],
           source: columns[1] as any,
@@ -205,31 +162,94 @@ const App: React.FC = () => {
           itemCount: columns[6],
           specs: columns[7],
           description: columns[8]
-        };
-        newDatasets.push(dataset);
+        });
       }
-
       setSavedDatasets(prev => {
         const merged = [...prev];
         newDatasets.forEach(nd => {
-          if (!merged.find(m => m.paperLink === nd.paperLink)) {
-            merged.push(nd);
-          }
+          if (!merged.find(m => m.paperLink === nd.paperLink)) merged.push(nd);
         });
         return merged;
       });
-
-      // Clear the input
       if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsText(file);
   };
 
+  const parseCSVLine = (line: string) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i++; } else { inQuotes = !inQuotes; }
+      } else if (char === ',' && !inQuotes) { result.push(current); current = ''; } else { current += char; }
+    }
+    result.push(current);
+    return result;
+  };
+
+  const filterAndSortItems = useCallback((items: BenchmarkDataset[]) => {
+    let result = [...items];
+
+    // 1. Keyword Filtering
+    if (filterQuery.trim()) {
+      const lQuery = filterQuery.toLowerCase();
+      result = result.filter(item => {
+        const searchableText = [
+          item.title,
+          item.description,
+          item.source,
+          item.year,
+          item.specs,
+          item.itemCount,
+          ...(item.authors || [])
+        ].join(' ').toLowerCase();
+        return searchableText.includes(lQuery);
+      });
+    }
+
+    // 2. Sorting
+    return result.sort((a, b) => {
+      let valA: string = (a[sortConfig.field] || '').toString().toLowerCase();
+      let valB: string = (b[sortConfig.field] || '').toString().toLowerCase();
+
+      if (sortConfig.field === 'year') {
+        const yearA = parseInt(valA) || 0;
+        const yearB = parseInt(valB) || 0;
+        if (sortConfig.order === 'asc') return yearA - yearB;
+        return yearB - yearA;
+      }
+
+      if (sortConfig.order === 'asc') return valA.localeCompare(valB);
+      return valB.localeCompare(valA);
+    });
+  }, [sortConfig, filterQuery]);
+
+  const displayedResults = useMemo(() => filterAndSortItems(searchState.results), [searchState.results, filterAndSortItems]);
+  const displayedSaved = useMemo(() => filterAndSortItems(savedDatasets), [savedDatasets, filterAndSortItems]);
+
+  const toggleSelectForComparison = (id: string) => {
+    setSelectedForComparison(prev => {
+      if (prev.includes(id)) return prev.filter(sid => sid !== id);
+      if (prev.length >= 10) {
+        alert("You can compare up to 10 datasets at once.");
+        return prev;
+      }
+      return [...prev, id];
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedForComparison([]);
+  };
+
   const isSaved = (link: string) => savedDatasets.some(d => d.paperLink === link);
+  const selectedDatasets = savedDatasets.filter(d => selectedForComparison.includes(d.id));
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Navigation Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -245,17 +265,13 @@ const App: React.FC = () => {
             <nav className="flex space-x-1">
               <button
                 onClick={() => setActiveTab('discover')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                  activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }`}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
               >
                 Discover
               </button>
               <button
                 onClick={() => setActiveTab('saved')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative ${
-                  activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }`}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative ${activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
               >
                 My Library
                 {savedDatasets.length > 0 && (
@@ -272,12 +288,8 @@ const App: React.FC = () => {
       <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         <div className="max-w-3xl mx-auto mb-12">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">
-              Find the Gold Standard
-            </h2>
-            <p className="mt-3 text-lg text-slate-500">
-              Search arXiv, Hugging Face, and more for SOTA benchmark datasets and papers.
-            </p>
+            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">Find the Gold Standard</h2>
+            <p className="mt-3 text-lg text-slate-500">Search arXiv, Hugging Face, and more for SOTA benchmark datasets and papers.</p>
           </div>
 
           <form onSubmit={handleSearch} className="relative group">
@@ -309,7 +321,6 @@ const App: React.FC = () => {
             </button>
           </form>
 
-          {/* Progress Bar and Status */}
           {searchState.isSearching && (
             <div className="mt-8 animate-in fade-in slide-in-from-top-4 duration-500">
               <div className="flex justify-between items-center mb-2">
@@ -317,10 +328,7 @@ const App: React.FC = () => {
                 <span className="text-sm font-bold text-slate-900">{Math.round(searchState.progress)}%</span>
               </div>
               <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                <div 
-                  className="bg-slate-900 h-full transition-all duration-300 ease-out"
-                  style={{ width: `${searchState.progress}%` }}
-                ></div>
+                <div className="bg-slate-900 h-full transition-all duration-300 ease-out" style={{ width: `${searchState.progress}%` }}></div>
               </div>
             </div>
           )}
@@ -328,61 +336,94 @@ const App: React.FC = () => {
 
         {/* View Controls & Action Buttons */}
         <div className="mb-6 flex flex-wrap justify-between items-center gap-4 border-b border-slate-200 pb-4">
-          <div className="flex items-center gap-4">
-            <h2 className="text-xl font-bold text-slate-900">
-              {activeTab === 'discover' ? 'Search Results' : 'My Library'}
-            </h2>
-            <div className="flex items-center bg-slate-100 p-1 rounded-lg">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                title="Grid View"
-              >
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-xl font-bold text-slate-900">{activeTab === 'discover' ? 'Results' : 'Library'}</h2>
+              <span className="text-sm font-semibold text-slate-400">
+                ({activeTab === 'discover' ? displayedResults.length : displayedSaved.length})
+              </span>
+            </div>
+            
+            {/* Local Keyword Filter */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Filter results..."
+                className="pl-9 pr-4 py-1.5 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all w-48 sm:w-64"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+              />
+              <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
+              <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`} title="Grid View">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
               </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                title="List View"
-              >
+              <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`} title="List View">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
               </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="sort-select" className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sort:</label>
+              <select 
+                id="sort-select"
+                className="bg-slate-100 border-none text-sm rounded-lg focus:ring-indigo-500 py-1.5 pl-3 pr-8 font-medium text-slate-700"
+                value={`${sortConfig.field}-${sortConfig.order}`}
+                onChange={(e) => {
+                  const [field, order] = e.target.value.split('-') as [SortField, SortOrder];
+                  setSortConfig({ field, order });
+                }}
+              >
+                <option value="year-desc">Newest First</option>
+                <option value="year-asc">Oldest First</option>
+                <option value="title-asc">Name (A-Z)</option>
+                <option value="title-desc">Name (Z-A)</option>
+              </select>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {activeTab === 'discover' && searchState.results.length > 0 && !searchState.isSearching && (
-              <button
-                onClick={handleSaveAll}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors"
-              >
+              <button onClick={handleSaveAll} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
                 Select All
               </button>
             )}
             {activeTab === 'saved' && (
               <>
-                <input
-                  type="file"
-                  accept=".csv"
-                  className="hidden"
-                  ref={fileInputRef}
-                  onChange={handleImportCSV}
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" /></svg>
-                  Import CSV
+                <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleImportCSV} />
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003 3h-10a3 3 0 00-3-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" /></svg>
+                  Import
                 </button>
                 {savedDatasets.length > 0 && (
-                  <button
-                    onClick={handleExportCSV}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-100 transition-colors"
-                  >
+                  <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-100 transition-colors">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003 3h-10a3 3 0 00-3-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                    Export CSV
+                    Export
+                  </button>
+                )}
+                {selectedForComparison.length > 0 && (
+                  <button 
+                    onClick={handleClearSelection}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-semibold hover:bg-slate-200 transition-colors border border-slate-200"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Deselect All
+                  </button>
+                )}
+                {selectedForComparison.length > 1 && (
+                  <button 
+                    onClick={() => setIsComparing(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 animate-in zoom-in-95"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                    Compare ({selectedForComparison.length})
                   </button>
                 )}
               </>
@@ -390,70 +431,66 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Results Area */}
         <section>
           {activeTab === 'discover' ? (
             <>
-              {searchState.error && (
-                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 flex items-center gap-3">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  <span>{searchState.error}</span>
-                </div>
-              )}
-
+              {searchState.error && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 flex items-center gap-3"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>{searchState.error}</span></div>}
+              
               {searchState.isSearching ? (
                 <div className={`grid ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'} gap-6`}>
-                  {[...Array(6)].map((_, i) => (
-                    <div key={i} className={`animate-pulse bg-white border border-slate-200 rounded-xl p-6 ${viewMode === 'list' ? 'h-24' : 'h-80'}`}>
-                      <div className="h-4 bg-slate-200 rounded w-1/4 mb-4"></div>
-                      <div className="h-6 bg-slate-200 rounded w-3/4 mb-2"></div>
-                    </div>
-                  ))}
+                  {[...Array(6)].map((_, i) => <div key={i} className={`animate-pulse bg-white border border-slate-200 rounded-xl p-6 ${viewMode === 'list' ? 'h-24' : 'h-80'}`}><div className="h-4 bg-slate-200 rounded w-1/4 mb-4"></div><div className="h-6 bg-slate-200 rounded w-3/4 mb-2"></div></div>)}
                 </div>
-              ) : searchState.results.length > 0 ? (
+              ) : displayedResults.length > 0 ? (
                 <div className={`grid ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'} gap-6`}>
-                  {searchState.results.map((dataset) => (
-                    <DatasetCard
-                      key={dataset.id}
-                      dataset={dataset}
-                      onSave={handleSave}
-                      isSaved={isSaved(dataset.paperLink)}
-                      viewMode={viewMode}
-                    />
-                  ))}
+                  {displayedResults.map((dataset) => <DatasetCard key={dataset.id} dataset={dataset} onSave={handleSave} isSaved={isSaved(dataset.paperLink)} viewMode={viewMode} />)}
                 </div>
-              ) : !searchState.error && (
+              ) : (
                 <div className="text-center py-20 text-slate-400">
                   <div className="mb-4 flex justify-center">
                     <svg className="w-16 h-16 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                   </div>
-                  <p className="text-lg">No results to show. Start by searching for a topic.</p>
+                  <p className="text-lg">
+                    {filterQuery ? `No results matching "${filterQuery}"` : 'No results to show. Start by searching for a topic.'}
+                  </p>
+                  {filterQuery && (
+                    <button onClick={() => setFilterQuery('')} className="mt-2 text-indigo-600 font-medium hover:underline">
+                      Clear filter
+                    </button>
+                  )}
                 </div>
               )}
             </>
           ) : (
             <div className="space-y-6">
-              {savedDatasets.length > 0 ? (
+              {displayedSaved.length > 0 ? (
                 <div className={`grid ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'} gap-6`}>
-                  {savedDatasets.map((dataset) => (
-                    <DatasetCard
-                      key={dataset.id}
-                      dataset={dataset}
-                      onRemove={handleRemove}
-                      isSaved={true}
+                  {displayedSaved.map((dataset) => (
+                    <DatasetCard 
+                      key={dataset.id} 
+                      dataset={dataset} 
+                      onRemove={handleRemove} 
+                      isSaved={true} 
                       viewMode={viewMode}
+                      showSelection={true}
+                      isSelected={selectedForComparison.includes(dataset.id)}
+                      onToggleSelect={toggleSelectForComparison}
                     />
                   ))}
                 </div>
               ) : (
                 <div className="text-center py-20 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-300">
-                  <p className="text-lg mb-4">Your library is empty.</p>
-                  <button
-                    onClick={() => setActiveTab('discover')}
-                    className="text-slate-900 font-semibold hover:underline"
-                  >
-                    Go discover new benchmarks
-                  </button>
+                  <p className="text-lg mb-4">
+                    {filterQuery ? `No saved items matching "${filterQuery}"` : 'Your library is empty.'}
+                  </p>
+                  {filterQuery ? (
+                    <button onClick={() => setFilterQuery('')} className="text-indigo-600 font-medium hover:underline">
+                      Clear filter
+                    </button>
+                  ) : (
+                    <button onClick={() => setActiveTab('discover')} className="text-slate-900 font-semibold hover:underline">
+                      Go discover new benchmarks
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -461,34 +498,22 @@ const App: React.FC = () => {
         </section>
       </main>
 
+      {/* Comparison Modal */}
+      {isComparing && (
+        <ComparisonModal 
+          datasets={selectedDatasets} 
+          onClose={() => setIsComparing(false)} 
+        />
+      )}
+
       <footer className="bg-slate-50 border-t border-slate-200 py-12 mt-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
-            <div>
-              <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">About</h4>
-              <p className="text-sm text-slate-500 leading-relaxed">
-                BenchmarkHub uses Google Gemini 3's advanced reasoning and search capabilities to aggregate the most relevant benchmark datasets for researchers and engineers.
-              </p>
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Sources</h4>
-              <ul className="text-sm text-slate-500 space-y-2">
-                <li>arXiv.org</li>
-                <li>Hugging Face Datasets</li>
-                <li>Google Scholar</li>
-                <li>Semantic Scholar</li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Storage</h4>
-              <p className="text-sm text-slate-500 leading-relaxed">
-                Your saved benchmarks are stored locally in your browser's persistent storage, ensuring you always have access to your research library.
-              </p>
-            </div>
+            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">About</h4><p className="text-sm text-slate-500 leading-relaxed">BenchmarkHub uses Google Gemini 3's advanced reasoning and search capabilities to aggregate the most relevant benchmark datasets for researchers and engineers.</p></div>
+            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Sources</h4><ul className="text-sm text-slate-500 space-y-2"><li>arXiv.org</li><li>Hugging Face Datasets</li><li>Google Scholar</li><li>Semantic Scholar</li></ul></div>
+            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Storage</h4><p className="text-sm text-slate-500 leading-relaxed">Your saved benchmarks are stored locally in your browser's persistent storage, ensuring you always have access to your research library.</p></div>
           </div>
-          <div className="mt-12 pt-8 border-t border-slate-200 text-center text-slate-400 text-xs">
-            © {new Date().getFullYear()} BenchmarkHub. Research made faster with AI.
-          </div>
+          <div className="mt-12 pt-8 border-t border-slate-200 text-center text-slate-400 text-xs">© {new Date().getFullYear()} BenchmarkHub. Research made faster with AI.</div>
         </div>
       </footer>
     </div>

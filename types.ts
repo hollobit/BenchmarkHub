@@ -22,3 +22,10 @@ export interface SearchState {
 }
 
 export type ViewMode = 'grid' | 'list';
+export type SortField = 'year' | 'title';
+export type SortOrder = 'asc' | 'desc';
+
+export interface SortConfig {
+  field: SortField;
+  order: SortOrder;
+}
