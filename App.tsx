@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { BenchmarkDataset, SearchState, ViewMode, SortConfig, SortField, SortOrder } from './types';
+import { BenchmarkDataset, SearchState, ViewMode, SortConfig, SortField, SortOrder, AppSettings } from './types';
 import { searchBenchmarkDatasets } from './services/geminiService';
 import DatasetCard from './components/DatasetCard';
 import ComparisonModal from './components/ComparisonModal';
+import SettingsModal from './components/SettingsModal';
 
 const SEARCH_STATUSES = [
   "Initializing search parameters...",
@@ -15,6 +16,10 @@ const SEARCH_STATUSES = [
   "Analyzing data formats and sizes...",
   "Synthesizing results..."
 ];
+
+const DEFAULT_SETTINGS: AppSettings = {
+  model: 'gemini-3-pro-preview'
+};
 
 const App: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -29,30 +34,47 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'discover' | 'saved'>('discover');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'year', order: 'desc' });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  // Selection state for comparison
   const [selectedForComparison, setSelectedForComparison] = useState<string[]>([]);
   const [isComparing, setIsComparing] = useState(false);
 
   const progressInterval = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load saved datasets from "database" (localStorage)
+  // Load state from localStorage on mount and check mandatory API key selection.
   useEffect(() => {
-    const stored = localStorage.getItem('benchmark_hub_saved');
-    if (stored) {
-      try {
-        setSavedDatasets(JSON.parse(stored));
-      } catch (e) {
-        console.error("Failed to parse saved datasets", e);
-      }
+    const storedLib = localStorage.getItem('benchmark_hub_saved');
+    if (storedLib) {
+      try { setSavedDatasets(JSON.parse(storedLib)); } catch (e) { console.error(e); }
     }
+    const storedSettings = localStorage.getItem('benchmark_hub_settings');
+    if (storedSettings) {
+      try { setSettings(JSON.parse(storedSettings)); } catch (e) { console.error(e); }
+    }
+
+    // Check if API key has been selected; this is mandatory before using the app.
+    const initializeApiKey = async () => {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && typeof aistudio.hasSelectedApiKey === 'function') {
+        const hasKey = await aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          await aistudio.openSelectKey();
+        }
+      }
+    };
+    initializeApiKey();
   }, []);
 
-  // Save datasets to "database" (localStorage) whenever they change
+  // Persist state.
   useEffect(() => {
     localStorage.setItem('benchmark_hub_saved', JSON.stringify(savedDatasets));
   }, [savedDatasets]);
+
+  useEffect(() => {
+    localStorage.setItem('benchmark_hub_settings', JSON.stringify(settings));
+  }, [settings]);
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -66,7 +88,7 @@ const App: React.FC = () => {
       status: SEARCH_STATUSES[0] 
     });
     setActiveTab('discover');
-    setFilterQuery(''); // Clear local filter on new global search
+    setFilterQuery(''); 
 
     progressInterval.current = window.setInterval(() => {
       setSearchState(prev => {
@@ -82,7 +104,7 @@ const App: React.FC = () => {
     }, 800);
 
     try {
-      const results = await searchBenchmarkDatasets(query);
+      const results = await searchBenchmarkDatasets(query, settings.model);
       if (progressInterval.current) clearInterval(progressInterval.current);
       setSearchState({ isSearching: false, results, progress: 100, status: 'Search complete' });
     } catch (error: any) {
@@ -193,7 +215,6 @@ const App: React.FC = () => {
   const filterAndSortItems = useCallback((items: BenchmarkDataset[]) => {
     let result = [...items];
 
-    // 1. Keyword Filtering
     if (filterQuery.trim()) {
       const lQuery = filterQuery.toLowerCase();
       result = result.filter(item => {
@@ -210,7 +231,6 @@ const App: React.FC = () => {
       });
     }
 
-    // 2. Sorting
     return result.sort((a, b) => {
       let valA: string = (a[sortConfig.field] || '').toString().toLowerCase();
       let valB: string = (b[sortConfig.field] || '').toString().toLowerCase();
@@ -262,25 +282,40 @@ const App: React.FC = () => {
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">BenchmarkHub</h1>
             </div>
             
-            <nav className="flex space-x-1">
-              <button
-                onClick={() => setActiveTab('discover')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+            <div className="flex items-center gap-4">
+              <nav className="flex space-x-1">
+                <button
+                  onClick={() => setActiveTab('discover')}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                >
+                  Discover
+                </button>
+                <button
+                  onClick={() => setActiveTab('saved')}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative ${activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                >
+                  My Library
+                  {savedDatasets.length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-slate-900 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                      {savedDatasets.length}
+                    </span>
+                  )}
+                </button>
+              </nav>
+
+              <div className="w-px h-6 bg-slate-200"></div>
+
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-all"
+                title="Configuration"
               >
-                Discover
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
               </button>
-              <button
-                onClick={() => setActiveTab('saved')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative ${activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
-              >
-                My Library
-                {savedDatasets.length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-slate-900 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
-                    {savedDatasets.length}
-                  </span>
-                )}
-              </button>
-            </nav>
+            </div>
           </div>
         </div>
       </header>
@@ -344,7 +379,6 @@ const App: React.FC = () => {
               </span>
             </div>
             
-            {/* Local Keyword Filter */}
             <div className="relative">
               <input
                 type="text"
@@ -498,11 +532,19 @@ const App: React.FC = () => {
         </section>
       </main>
 
-      {/* Comparison Modal */}
+      {/* Modals */}
       {isComparing && (
         <ComparisonModal 
           datasets={selectedDatasets} 
           onClose={() => setIsComparing(false)} 
+        />
+      )}
+
+      {isSettingsOpen && (
+        <SettingsModal 
+          settings={settings}
+          onUpdate={setSettings}
+          onClose={() => setIsSettingsOpen(false)}
         />
       )}
 

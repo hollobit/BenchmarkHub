@@ -29,3 +29,9 @@ export interface SortConfig {
   field: SortField;
   order: SortOrder;
 }
+
+export type GeminiModel = 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-flash-lite-latest';
+
+export interface AppSettings {
+  model: GeminiModel;
+}

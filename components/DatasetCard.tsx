@@ -165,6 +165,28 @@ const DatasetCard: React.FC<DatasetCardProps> = ({
         {dataset.description}
       </p>
 
+      {/* Citations section as required for Search Grounding. */}
+      {dataset.groundingSources && dataset.groundingSources.length > 0 && (
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Verified Sources</h4>
+          <div className="flex flex-wrap gap-2">
+            {dataset.groundingSources.slice(0, 3).map((source, idx) => (
+              <a 
+                key={idx} 
+                href={source.uri} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-[10px] text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded transition-colors truncate max-w-[150px]"
+                title={source.title}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {source.title || 'Source'}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3 pt-4 border-t border-slate-100">
         <div className="flex items-center text-sm text-slate-700">
           <svg className="w-4 h-4 mr-2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
