@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { BenchmarkDataset, ViewMode } from '../types';
 
 interface DatasetCardProps {
@@ -17,6 +17,8 @@ const DatasetCard: React.FC<DatasetCardProps> = ({
   dataset, onSave, onRemove, isSaved, viewMode = 'grid', 
   onToggleSelect, isSelected, showSelection 
 }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   const handleAction = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isSaved) {
@@ -54,11 +56,11 @@ const DatasetCard: React.FC<DatasetCardProps> = ({
     return (
       <div 
         onClick={handleToggle}
-        className={`relative bg-white border rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-4 transition-all ${
+        className={`relative bg-white border rounded-lg p-4 flex flex-col md:flex-row md:items-start gap-4 transition-all ${
           isSelected ? 'border-indigo-500 ring-1 ring-indigo-500 bg-indigo-50/10' : 'border-slate-200 hover:bg-slate-50'
         }`}
       >
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-3 flex-shrink-0 mt-1">
           {showSelection && (
              <div 
               className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
@@ -86,37 +88,66 @@ const DatasetCard: React.FC<DatasetCardProps> = ({
           <p className="text-xs text-slate-500 truncate">
             {dataset.authors?.join(', ')} {dataset.year ? `· ${dataset.year}` : ''}
           </p>
-        </div>
-
-        <div className="flex-shrink-0 flex items-center gap-4 text-xs text-slate-500">
-          <div className="hidden lg:block w-32 truncate">
-            <span className="font-semibold">Size:</span> {dataset.itemCount || 'N/A'}
+          
+          <div className="mt-2 text-xs text-slate-600">
+            <p className={`${isExpanded ? '' : 'line-clamp-1'} leading-relaxed`}>
+              {dataset.description}
+            </p>
+            <button 
+              onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+              className="text-indigo-600 hover:text-indigo-800 font-semibold mt-1 flex items-center gap-1 transition-colors"
+            >
+              {isExpanded ? (
+                <>
+                  <span>Show less</span>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" /></svg>
+                </>
+              ) : (
+                <>
+                  <span>Read description</span>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="flex-shrink-0 flex items-center gap-2">
-          <a
-            href={dataset.paperLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
-            onClick={(e) => e.stopPropagation()}
-            title="View Paper"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-          </a>
-          <button
-            onClick={handleAction}
-            className={`p-2 rounded-lg transition-colors ${
-              isSaved ? 'text-red-500 bg-red-50 hover:bg-red-100' : 'text-slate-400 bg-slate-50 hover:bg-slate-100'
-            }`}
-          >
-            {isSaved ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            )}
-          </button>
+        <div className="flex-shrink-0 flex flex-col md:items-end gap-2 mt-1">
+          <div className="flex flex-col gap-1 text-[10px] text-slate-500 md:items-end">
+            <div className="max-w-[120px] truncate" title={`Full Size: ${dataset.itemCount || 'N/A'}`}>
+              <span className="font-bold text-slate-400 uppercase tracking-tighter mr-1">Size:</span>
+              <span className="text-slate-700">{dataset.itemCount || 'N/A'}</span>
+            </div>
+            <div className="max-w-[120px] truncate" title={`Full Format: ${dataset.specs || 'N/A'}`}>
+              <span className="font-bold text-slate-400 uppercase tracking-tighter mr-1">Format:</span>
+              <span className="text-slate-700">{dataset.specs || 'N/A'}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <a
+              href={dataset.paperLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 text-slate-400 hover:text-slate-900 transition-colors"
+              onClick={(e) => e.stopPropagation()}
+              title="View Paper"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            </a>
+            <button
+              onClick={handleAction}
+              className={`p-2 rounded-lg transition-colors ${
+                isSaved ? 'text-red-500 bg-red-50 hover:bg-red-100' : 'text-slate-400 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              {isSaved ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -165,38 +196,16 @@ const DatasetCard: React.FC<DatasetCardProps> = ({
         {dataset.description}
       </p>
 
-      {/* Citations section as required for Search Grounding. */}
-      {dataset.groundingSources && dataset.groundingSources.length > 0 && (
-        <div className="mb-4">
-          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Verified Sources</h4>
-          <div className="flex flex-wrap gap-2">
-            {dataset.groundingSources.slice(0, 3).map((source, idx) => (
-              <a 
-                key={idx} 
-                href={source.uri} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-[10px] text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded transition-colors truncate max-w-[150px]"
-                title={source.title}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {source.title || 'Source'}
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="space-y-3 pt-4 border-t border-slate-100">
-        <div className="flex items-center text-sm text-slate-700">
+        <div className="flex items-center text-sm text-slate-700" title={`Full Size: ${dataset.itemCount || 'N/A'}`}>
           <svg className="w-4 h-4 mr-2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
           <span className="font-medium">Size:</span>
-          <span className="ml-2 truncate">{dataset.itemCount || 'N/A'}</span>
+          <span className="ml-2 truncate max-w-[150px]">{dataset.itemCount || 'N/A'}</span>
         </div>
-        <div className="flex items-center text-sm text-slate-700">
+        <div className="flex items-center text-sm text-slate-700" title={`Full Format: ${dataset.specs || 'N/A'}`}>
           <svg className="w-4 h-4 mr-2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
           <span className="font-medium">Format:</span>
-          <span className="ml-2 truncate">{dataset.specs || 'N/A'}</span>
+          <span className="ml-2 truncate max-w-[150px]">{dataset.specs || 'N/A'}</span>
         </div>
       </div>
 

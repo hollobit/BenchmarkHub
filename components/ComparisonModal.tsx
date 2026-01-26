@@ -4,10 +4,32 @@ import { BenchmarkDataset } from '../types';
 
 interface ComparisonModalProps {
   datasets: BenchmarkDataset[];
+  filterQuery: string;
   onClose: () => void;
 }
 
-const ComparisonModal: React.FC<ComparisonModalProps> = ({ datasets, onClose }) => {
+const HighlightedText: React.FC<{ text: string; query: string }> = ({ text, query }) => {
+  if (!query.trim()) return <span>{text}</span>;
+
+  const regex = new RegExp(`(${query})`, 'gi');
+  const parts = text.split(regex);
+
+  return (
+    <span>
+      {parts.map((part, i) => 
+        regex.test(part) ? (
+          <mark key={i} className="bg-indigo-100 text-indigo-700 rounded-sm font-bold px-0.5">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </span>
+  );
+};
+
+const ComparisonModal: React.FC<ComparisonModalProps> = ({ datasets, filterQuery, onClose }) => {
   if (datasets.length === 0) return null;
 
   const features = [
@@ -16,7 +38,7 @@ const ComparisonModal: React.FC<ComparisonModalProps> = ({ datasets, onClose }) 
     { label: 'Authors', key: 'authors', formatter: (val: string[]) => val?.join(', ') || 'N/A' },
     { label: 'Size', key: 'itemCount' },
     { label: 'Specs/Format', key: 'specs' },
-    { label: 'Description', key: 'description' },
+    { label: 'Description', key: 'description', highlight: true },
   ];
 
   return (
@@ -46,7 +68,9 @@ const ComparisonModal: React.FC<ComparisonModalProps> = ({ datasets, onClose }) 
                 <th className="sticky left-0 bg-slate-50 p-4 text-left font-bold text-slate-900 border-r border-slate-200 w-48 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Feature</th>
                 {datasets.map(d => (
                   <th key={d.id} className="p-4 text-left min-w-[300px] align-top">
-                    <div className="text-slate-900 font-bold text-sm leading-tight line-clamp-2 mb-2">{d.title}</div>
+                    <div className="text-slate-900 font-bold text-sm leading-tight line-clamp-2 mb-2">
+                      <HighlightedText text={d.title} query={filterQuery} />
+                    </div>
                     <div className="flex gap-2">
                        <a href={d.paperLink} target="_blank" rel="noreferrer" className="text-[10px] bg-slate-900 text-white px-2 py-1 rounded hover:bg-slate-800">Paper</a>
                        {d.githubLink && <a href={d.githubLink} target="_blank" rel="noreferrer" className="text-[10px] border border-slate-300 px-2 py-1 rounded hover:bg-slate-50">GitHub</a>}
@@ -63,10 +87,19 @@ const ComparisonModal: React.FC<ComparisonModalProps> = ({ datasets, onClose }) 
                   </td>
                   {datasets.map(d => {
                     const val = (d as any)[feature.key];
-                    const content = feature.formatter ? feature.formatter(val) : (val || 'N/A');
+                    let content: React.ReactNode;
+                    
+                    if (feature.highlight && typeof val === 'string') {
+                      content = <HighlightedText text={val} query={filterQuery} />;
+                    } else if (feature.formatter) {
+                      content = feature.formatter(val);
+                    } else {
+                      content = val || 'N/A';
+                    }
+
                     return (
                       <td key={d.id} className="p-4 text-sm text-slate-600 align-top">
-                        <div className="whitespace-pre-wrap">
+                        <div className="whitespace-pre-wrap leading-relaxed">
                           {content}
                         </div>
                       </td>

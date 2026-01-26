@@ -21,9 +21,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   model: 'gemini-3-pro-preview'
 };
 
+const MAX_HISTORY_ITEMS = 8;
+
 const App: React.FC = () => {
   const [query, setQuery] = useState('');
   const [filterQuery, setFilterQuery] = useState('');
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [searchState, setSearchState] = useState<SearchState>({
     isSearching: false,
     results: [],
@@ -43,7 +46,7 @@ const App: React.FC = () => {
   const progressInterval = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load state from localStorage on mount and check mandatory API key selection.
+  // Load state from localStorage on mount.
   useEffect(() => {
     const storedLib = localStorage.getItem('benchmark_hub_saved');
     if (storedLib) {
@@ -53,8 +56,11 @@ const App: React.FC = () => {
     if (storedSettings) {
       try { setSettings(JSON.parse(storedSettings)); } catch (e) { console.error(e); }
     }
+    const storedHistory = localStorage.getItem('benchmark_hub_history');
+    if (storedHistory) {
+      try { setSearchHistory(JSON.parse(storedHistory)); } catch (e) { console.error(e); }
+    }
 
-    // Check if API key has been selected; this is mandatory before using the app.
     const initializeApiKey = async () => {
       const aistudio = (window as any).aistudio;
       if (aistudio && typeof aistudio.hasSelectedApiKey === 'function') {
@@ -76,9 +82,33 @@ const App: React.FC = () => {
     localStorage.setItem('benchmark_hub_settings', JSON.stringify(settings));
   }, [settings]);
 
-  const handleSearch = async (e?: React.FormEvent) => {
+  useEffect(() => {
+    localStorage.setItem('benchmark_hub_history', JSON.stringify(searchHistory));
+  }, [searchHistory]);
+
+  const addToHistory = (newQuery: string) => {
+    setSearchHistory(prev => {
+      const filtered = prev.filter(q => q.toLowerCase() !== newQuery.toLowerCase());
+      const updated = [newQuery, ...filtered].slice(0, MAX_HISTORY_ITEMS);
+      return updated;
+    });
+  };
+
+  const clearHistory = () => {
+    setSearchHistory([]);
+    localStorage.removeItem('benchmark_hub_history');
+  };
+
+  const handleSearch = async (e?: React.FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
-    if (!query.trim()) return;
+    const activeQuery = overrideQuery !== undefined ? overrideQuery : query;
+    if (!activeQuery.trim()) return;
+
+    if (overrideQuery !== undefined) {
+      setQuery(overrideQuery);
+    }
+
+    addToHistory(activeQuery);
 
     setSearchState({ 
       isSearching: true, 
@@ -104,7 +134,7 @@ const App: React.FC = () => {
     }, 800);
 
     try {
-      const results = await searchBenchmarkDatasets(query, settings.model);
+      const results = await searchBenchmarkDatasets(activeQuery, settings.model);
       if (progressInterval.current) clearInterval(progressInterval.current);
       setSearchState({ isSearching: false, results, progress: 100, status: 'Search complete' });
     } catch (error: any) {
@@ -286,17 +316,22 @@ const App: React.FC = () => {
               <nav className="flex space-x-1">
                 <button
                   onClick={() => setActiveTab('discover')}
-                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative flex items-center gap-2 ${activeTab === 'discover' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
                 >
-                  Discover
+                  <span>Discover</span>
+                  {searchState.results.length > 0 && (
+                    <span className="bg-slate-200 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                      {searchState.results.length}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setActiveTab('saved')}
-                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative ${activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors relative flex items-center gap-2 ${activeTab === 'saved' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
                 >
-                  My Library
+                  <span>My Library</span>
                   {savedDatasets.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-slate-900 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                    <span className="bg-slate-900 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
                       {savedDatasets.length}
                     </span>
                   )}
@@ -307,13 +342,14 @@ const App: React.FC = () => {
 
               <button 
                 onClick={() => setIsSettingsOpen(true)}
-                className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-all"
+                className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-all relative"
                 title="Configuration"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
+                {settings.model !== DEFAULT_SETTINGS.model && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full border border-white"></div>}
               </button>
             </div>
           </div>
@@ -356,6 +392,31 @@ const App: React.FC = () => {
             </button>
           </form>
 
+          {searchHistory.length > 0 && !searchState.isSearching && (
+            <div className="mt-4 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Searches</span>
+                <button 
+                  onClick={clearHistory}
+                  className="text-[10px] font-bold text-indigo-500 hover:text-indigo-700 uppercase tracking-widest transition-colors"
+                >
+                  Clear History
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {searchHistory.map((h, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleSearch(undefined, h)}
+                    className="px-3 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-600 rounded-full text-xs transition-all border border-slate-200 hover:border-indigo-200"
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {searchState.isSearching && (
             <div className="mt-8 animate-in fade-in slide-in-from-top-4 duration-500">
               <div className="flex justify-between items-center mb-2">
@@ -372,17 +433,17 @@ const App: React.FC = () => {
         {/* View Controls & Action Buttons */}
         <div className="mb-6 flex flex-wrap justify-between items-center gap-4 border-b border-slate-200 pb-4">
           <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-xl font-bold text-slate-900">{activeTab === 'discover' ? 'Results' : 'Library'}</h2>
-              <span className="text-sm font-semibold text-slate-400">
-                ({activeTab === 'discover' ? displayedResults.length : displayedSaved.length})
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-slate-900">{activeTab === 'discover' ? 'Search Results' : 'Saved Library'}</h2>
+              <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold text-xs">
+                {activeTab === 'discover' ? displayedResults.length : displayedSaved.length} items
               </span>
             </div>
             
             <div className="relative">
               <input
                 type="text"
-                placeholder="Filter results..."
+                placeholder="Filter current view..."
                 className="pl-9 pr-4 py-1.5 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all w-48 sm:w-64"
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
@@ -402,7 +463,6 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <label htmlFor="sort-select" className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sort:</label>
               <select 
                 id="sort-select"
                 className="bg-slate-100 border-none text-sm rounded-lg focus:ring-indigo-500 py-1.5 pl-3 pr-8 font-medium text-slate-700"
@@ -424,31 +484,35 @@ const App: React.FC = () => {
             {activeTab === 'discover' && searchState.results.length > 0 && !searchState.isSearching && (
               <button onClick={handleSaveAll} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                Select All
+                Save All Results
               </button>
             )}
             {activeTab === 'saved' && (
               <>
                 <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleImportCSV} />
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-100 transition-colors">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003 3h-10a3 3 0 00-3-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" /></svg>
+                <button 
+                  onClick={() => fileInputRef.current?.click()} 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-100 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" /></svg>
                   Import
                 </button>
                 {savedDatasets.length > 0 && (
-                  <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-100 transition-colors">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003 3h-10a3 3 0 00-3-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  <button 
+                    onClick={handleExportCSV} 
+                    className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-semibold hover:bg-emerald-100 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                     Export
                   </button>
                 )}
+                <div className="w-px h-4 bg-slate-200 mx-1"></div>
                 {selectedForComparison.length > 0 && (
                   <button 
                     onClick={handleClearSelection}
                     className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-semibold hover:bg-slate-200 transition-colors border border-slate-200"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    Deselect All
+                    Clear Selected
                   </button>
                 )}
                 {selectedForComparison.length > 1 && (
@@ -456,7 +520,6 @@ const App: React.FC = () => {
                     onClick={() => setIsComparing(true)}
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 animate-in zoom-in-95"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                     Compare ({selectedForComparison.length})
                   </button>
                 )}
@@ -480,17 +543,9 @@ const App: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-center py-20 text-slate-400">
-                  <div className="mb-4 flex justify-center">
-                    <svg className="w-16 h-16 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-                  </div>
                   <p className="text-lg">
-                    {filterQuery ? `No results matching "${filterQuery}"` : 'No results to show. Start by searching for a topic.'}
+                    {filterQuery ? `No results matching "${filterQuery}"` : 'Enter a topic above to search for benchmarks.'}
                   </p>
-                  {filterQuery && (
-                    <button onClick={() => setFilterQuery('')} className="mt-2 text-indigo-600 font-medium hover:underline">
-                      Clear filter
-                    </button>
-                  )}
                 </div>
               )}
             </>
@@ -513,18 +568,8 @@ const App: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-center py-20 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-300">
-                  <p className="text-lg mb-4">
-                    {filterQuery ? `No saved items matching "${filterQuery}"` : 'Your library is empty.'}
-                  </p>
-                  {filterQuery ? (
-                    <button onClick={() => setFilterQuery('')} className="text-indigo-600 font-medium hover:underline">
-                      Clear filter
-                    </button>
-                  ) : (
-                    <button onClick={() => setActiveTab('discover')} className="text-slate-900 font-semibold hover:underline">
-                      Go discover new benchmarks
-                    </button>
-                  )}
+                  <p className="text-lg mb-4">Your library is empty.</p>
+                  <button onClick={() => setActiveTab('discover')} className="text-indigo-600 font-semibold hover:underline">Go discover new benchmarks</button>
                 </div>
               )}
             </div>
@@ -536,6 +581,7 @@ const App: React.FC = () => {
       {isComparing && (
         <ComparisonModal 
           datasets={selectedDatasets} 
+          filterQuery={filterQuery}
           onClose={() => setIsComparing(false)} 
         />
       )}
@@ -550,12 +596,7 @@ const App: React.FC = () => {
 
       <footer className="bg-slate-50 border-t border-slate-200 py-12 mt-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
-            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">About</h4><p className="text-sm text-slate-500 leading-relaxed">BenchmarkHub uses Google Gemini 3's advanced reasoning and search capabilities to aggregate the most relevant benchmark datasets for researchers and engineers.</p></div>
-            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Sources</h4><ul className="text-sm text-slate-500 space-y-2"><li>arXiv.org</li><li>Hugging Face Datasets</li><li>Google Scholar</li><li>Semantic Scholar</li></ul></div>
-            <div><h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Storage</h4><p className="text-sm text-slate-500 leading-relaxed">Your saved benchmarks are stored locally in your browser's persistent storage, ensuring you always have access to your research library.</p></div>
-          </div>
-          <div className="mt-12 pt-8 border-t border-slate-200 text-center text-slate-400 text-xs">© {new Date().getFullYear()} BenchmarkHub. Research made faster with AI.</div>
+          <div className="text-center text-slate-400 text-xs">© {new Date().getFullYear()} BenchmarkHub. Research made faster with Gemini AI.</div>
         </div>
       </footer>
     </div>

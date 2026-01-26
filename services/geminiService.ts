@@ -3,7 +3,6 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { BenchmarkDataset, GeminiModel } from "../types";
 
 export const searchBenchmarkDatasets = async (query: string, model: GeminiModel): Promise<BenchmarkDataset[]> => {
-  // Always create a new instance right before making an API call to ensure it uses the most up-to-date API key.
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const prompt = `
@@ -51,10 +50,9 @@ export const searchBenchmarkDatasets = async (query: string, model: GeminiModel)
     });
 
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    // Note: Per guidelines for Search Grounding, response.text might not always be JSON.
     const rawData = JSON.parse(response.text || "[]");
 
-    // Map the LLM output to our application type, injecting grounding info.
+    // Map the LLM output to our application type, injecting grounding info if needed
     return rawData.map((item: any, index: number) => ({
       ...item,
       id: `${Date.now()}-${index}`,
@@ -64,15 +62,8 @@ export const searchBenchmarkDatasets = async (query: string, model: GeminiModel)
         title: chunk.web?.title || chunk.maps?.title
       })).filter(s => s.uri)
     }));
-  } catch (error: any) {
+  } catch (error) {
     console.error("Gemini Search Error:", error);
-    // If request fails due to missing key or model, prompt user to select a key again.
-    if (error.message?.includes("Requested entity was not found")) {
-        if (typeof window !== 'undefined' && (window as any).aistudio?.openSelectKey) {
-            (window as any).aistudio.openSelectKey();
-        }
-        throw new Error("API Key or Model not found. Please select a valid API key from a paid GCP project.");
-    }
-    throw new Error("Failed to fetch benchmark data. Please check your connection or API key.");
+    throw new Error("Failed to fetch benchmark data. Please try again later.");
   }
 };
