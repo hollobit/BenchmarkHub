@@ -27,6 +27,8 @@ export const searchBenchmarkDatasets = async (query: string, model: GeminiModel)
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
+        // responseMimeType is used to guide the model towards JSON, 
+        // but we implement manual JSON extraction to handle citations.
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -50,17 +52,27 @@ export const searchBenchmarkDatasets = async (query: string, model: GeminiModel)
     });
 
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const rawData = JSON.parse(response.text || "[]");
+    
+    // As per Search Grounding guidelines, output might not be strictly JSON 
+    // because of citations or additional text. We extract the array block.
+    let responseText = response.text || "[]";
+    const jsonMatch = responseText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (jsonMatch) {
+      responseText = jsonMatch[0];
+    }
+    
+    const rawData = JSON.parse(responseText);
 
     // Map the LLM output to our application type, injecting grounding info if needed
     return rawData.map((item: any, index: number) => ({
       ...item,
       id: `${Date.now()}-${index}`,
       source: item.source || 'Other',
-      groundingSources: groundingChunks.map((chunk: any) => ({
-        uri: chunk.web?.uri || chunk.maps?.uri,
-        title: chunk.web?.title || chunk.maps?.title
-      })).filter(s => s.uri)
+      groundingSources: groundingChunks.map((chunk: any) => {
+        const uri = chunk.web?.uri || chunk.maps?.uri;
+        const title = chunk.web?.title || chunk.maps?.title;
+        return (uri && title) ? { uri, title } : null;
+      }).filter((s): s is { uri: string; title: string } => s !== null)
     }));
   } catch (error) {
     console.error("Gemini Search Error:", error);

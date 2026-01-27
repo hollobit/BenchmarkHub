@@ -13,6 +13,13 @@ export interface BenchmarkDataset {
   groundingSources?: { uri: string; title: string }[];
 }
 
+export interface DatasetList {
+  id: string;
+  name: string;
+  datasetIds: string[];
+  createdAt: number;
+}
+
 export interface SearchState {
   isSearching: boolean;
   results: BenchmarkDataset[];
